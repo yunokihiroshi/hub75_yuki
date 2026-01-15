@@ -43,8 +43,12 @@ Examples:
     try:
         config = getattr(countdown_config, args.config)
     except AttributeError:
+        # Dynamically list available configs
+        available_configs = [
+            name for name in dir(countdown_config) if name.isupper() and name.endswith("_CONFIG")
+        ]
         print(f"❌ Error: Config '{args.config}' not found in countdown_config.py")
-        print("Available configs: DEFAULT_CONFIG, THESIS_CONFIG")
+        print(f"Available configs: {', '.join(available_configs)}")
         sys.exit(1)
 
     if args.port:

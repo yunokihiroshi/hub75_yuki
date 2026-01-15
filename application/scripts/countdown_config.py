@@ -4,7 +4,7 @@ Countdown display configuration.
 """
 
 import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
 
@@ -59,20 +59,12 @@ class SerialConfig:
 class Config:
     """全体設定"""
 
-    deadline: DeadlineConfig = None
-    display: DisplayConfig = None
-    serial: SerialConfig = None
+    deadline: DeadlineConfig = field(default_factory=DeadlineConfig)
+    display: DisplayConfig = field(default_factory=DisplayConfig)
+    serial: SerialConfig = field(default_factory=SerialConfig)
     fps: float = 30.0
     panel_width: int = 128
     panel_height: int = 32
-
-    def __post_init__(self):
-        if self.deadline is None:
-            self.deadline = DeadlineConfig()
-        if self.display is None:
-            self.display = DisplayConfig()
-        if self.serial is None:
-            self.serial = SerialConfig()
 
 
 DEFAULT_CONFIG = Config()
