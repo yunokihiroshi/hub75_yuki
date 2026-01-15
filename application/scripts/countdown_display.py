@@ -40,16 +40,18 @@ Examples:
     parser.add_argument("--fps", type=float, help="Frames per second (overrides config)")
     args = parser.parse_args()
 
-    try:
-        config = getattr(countdown_config, args.config)
-    except AttributeError:
-        # Dynamically list available configs
-        available_configs = [
-            name for name in dir(countdown_config) if name.isupper() and name.endswith("_CONFIG")
-        ]
+    # Validate and get config (safer than arbitrary getattr)
+    available_configs = {
+        "DEFAULT_CONFIG": countdown_config.DEFAULT_CONFIG,
+        "THESIS_CONFIG": countdown_config.THESIS_CONFIG,
+    }
+
+    if args.config not in available_configs:
         print(f"❌ Error: Config '{args.config}' not found in countdown_config.py")
-        print(f"Available configs: {', '.join(available_configs)}")
+        print(f"Available configs: {', '.join(available_configs.keys())}")
         sys.exit(1)
+
+    config = available_configs[args.config]
 
     if args.port:
         config.serial.port = args.port

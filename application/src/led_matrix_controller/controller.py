@@ -7,7 +7,7 @@ and communication with the LED matrix panel.
 
 import time
 import math
-from typing import Tuple, Union, Any
+from typing import Tuple, Union, Any, Protocol
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +20,25 @@ except ImportError:
     HAS_CV2 = False
 
 from .devices.base import BaseDevice
+
+
+class CountdownConfig(Protocol):
+    """Protocol for countdown configuration objects."""
+
+    @property
+    def deadline(self):
+        """Deadline configuration with datetime property."""
+        ...
+
+    @property
+    def display(self):
+        """Display configuration (colors, fonts, etc.)."""
+        ...
+
+    @property
+    def fps(self) -> float:
+        """Target frames per second."""
+        ...
 
 
 # Display configuration
@@ -564,13 +583,13 @@ class LEDMatrixController:
 
         return image
 
-    def run_countdown(self, config: Any):
+    def run_countdown(self, config: CountdownConfig):
         """
         Run countdown display continuously with given config.
 
         Args:
-            config: Configuration object with deadline, display, and fps attributes.
-                   Expected to have countdown_config.Config structure.
+            config: Configuration object implementing CountdownConfig protocol.
+                   Should have deadline, display, and fps attributes.
         """
         import colorsys
         import datetime
@@ -681,7 +700,8 @@ class LEDMatrixController:
                     # Fallback: no OpenCV, just fill a rectangle
                     h, w = self.height, self.width
                     # Convert RGB to BGR for numpy array storage
-                    color_bgr = display_cfg.normal_color[::-1]
+                    rgb_r, rgb_g, rgb_b = display_cfg.normal_color
+                    color_bgr = (rgb_b, rgb_g, rgb_r)
                     image[h // 4 : 3 * h // 4, w // 4 : 3 * w // 4] = color_bgr
 
                 self.display(image)
