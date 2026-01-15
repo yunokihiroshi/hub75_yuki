@@ -657,9 +657,14 @@ class LEDMatrixController:
                         x = start_x
                         for i, char in enumerate(text):
                             hue = i / max(1, len(text) - 1)
-                            r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
-                            color = (int(b * 255), int(g * 255), int(r * 255))
-                            cv2.putText(image, char, (x, y), font, font_scale, color, thickness)
+                            # colorsys returns RGB, but OpenCV expects BGR
+                            rgb_r, rgb_g, rgb_b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+                            color_bgr = (
+                                int(rgb_b * 255),
+                                int(rgb_g * 255),
+                                int(rgb_r * 255),
+                            )  # BGR format for OpenCV
+                            cv2.putText(image, char, (x, y), font, font_scale, color_bgr, thickness)
                             (char_w, _), _ = cv2.getTextSize(char, font, font_scale, thickness)
                             x += char_w
                     else:
@@ -667,11 +672,17 @@ class LEDMatrixController:
                             color_rgb = display_cfg.warning_color
                         else:
                             color_rgb = display_cfg.normal_color
-                        color = (color_rgb[2], color_rgb[1], color_rgb[0])
-                        cv2.putText(image, text, (start_x, y), font, font_scale, color, thickness)
+                        # Convert RGB tuple to BGR for OpenCV
+                        color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
+                        cv2.putText(
+                            image, text, (start_x, y), font, font_scale, color_bgr, thickness
+                        )
                 else:
+                    # Fallback: no OpenCV, just fill a rectangle
                     h, w = self.height, self.width
-                    image[h // 4 : 3 * h // 4, w // 4 : 3 * w // 4] = display_cfg.normal_color[::-1]
+                    # Convert RGB to BGR for numpy array storage
+                    color_bgr = display_cfg.normal_color[::-1]
+                    image[h // 4 : 3 * h // 4, w // 4 : 3 * w // 4] = color_bgr
 
                 self.display(image)
 
