@@ -7,18 +7,38 @@ and communication with the LED matrix panel.
 
 import time
 import math
-from typing import Tuple, Optional, Union
+from typing import Tuple, Union, Any, Protocol
 from pathlib import Path
 
 import numpy as np
 
 try:
     import cv2
+
     HAS_CV2 = True
 except ImportError:
     HAS_CV2 = False
 
 from .devices.base import BaseDevice
+
+
+class CountdownConfig(Protocol):
+    """Protocol for countdown configuration objects."""
+
+    @property
+    def deadline(self):
+        """Deadline configuration with datetime property."""
+        ...
+
+    @property
+    def display(self):
+        """Display configuration (colors, fonts, etc.)."""
+        ...
+
+    @property
+    def fps(self) -> float:
+        """Target frames per second."""
+        ...
 
 
 # Display configuration
@@ -43,7 +63,7 @@ def cobs_encode(data: bytes) -> bytes:
         COBS-encoded data (does not include terminating 0x00)
     """
     if not data:
-        return b'\x01'  # Empty packet
+        return b"\x01"  # Empty packet
 
     output = bytearray()
     code_index = 0
@@ -78,13 +98,13 @@ def cobs_encode(data: bytes) -> bytes:
 
 class LEDMatrixController:
     """Controller for 128x32 HUB75 LED Matrix panel."""
-    
+
     def __init__(
         self,
         device: BaseDevice,
         width: int = DISPLAY_WIDTH,
         height: int = DISPLAY_HEIGHT,
-        brightness: float = 1.0
+        brightness: float = 1.0,
     ):
         """
         Initialize controller.
@@ -104,83 +124,84 @@ class LEDMatrixController:
         self._frame_count = 0
         self._fps_start = time.time()
         self._current_fps = 0.0
-    
+
     def connect(self) -> bool:
         """Connect to the device."""
         return self.device.connect()
-    
+
     def disconnect(self):
         """Disconnect from the device."""
         self.device.disconnect()
-    
+
     def _apply_brightness(self, image: np.ndarray) -> np.ndarray:
         """Apply brightness adjustment."""
         if self.brightness < 1.0:
             return (image * self.brightness).astype(np.uint8)
         return image
-    
+
     def _resize_image(self, image: np.ndarray, fit_mode: str = "fit") -> np.ndarray:
         """
         Resize image to display dimensions with aspect ratio preservation.
-        
+
         Args:
             image: Input image (H, W, 3) RGB
             fit_mode: "fit" (letterbox), "fill" (crop), or "stretch"
         """
         if not HAS_CV2:
             raise ImportError("OpenCV is required for image processing")
-        
+
         h, w = image.shape[:2]
         target_w, target_h = self.width, self.height
-        
+
         if fit_mode == "stretch":
             return cv2.resize(image, (target_w, target_h))
-        
+
         # Calculate scaling
         scale_w = target_w / w
         scale_h = target_h / h
-        
+
         if fit_mode == "fit":
             # Fit entire image (letterbox)
             scale = min(scale_w, scale_h)
         else:  # fill
             # Fill entire display (crop)
             scale = max(scale_w, scale_h)
-        
+
         new_w = int(w * scale)
         new_h = int(h * scale)
-        
+
         # Resize
         resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
-        
+
         # Create output canvas
         output = np.zeros((target_h, target_w, 3), dtype=np.uint8)
-        
+
         # Center the image
         x_offset = (target_w - new_w) // 2
         y_offset = (target_h - new_h) // 2
-        
+
         # Crop if necessary (for fill mode)
         src_x = max(0, -x_offset)
         src_y = max(0, -y_offset)
         dst_x = max(0, x_offset)
         dst_y = max(0, y_offset)
-        
+
         copy_w = min(new_w - src_x, target_w - dst_x)
         copy_h = min(new_h - src_y, target_h - dst_y)
-        
-        output[dst_y:dst_y+copy_h, dst_x:dst_x+copy_w] = \
-            resized[src_y:src_y+copy_h, src_x:src_x+copy_w]
-        
+
+        output[dst_y : dst_y + copy_h, dst_x : dst_x + copy_w] = resized[
+            src_y : src_y + copy_h, src_x : src_x + copy_w
+        ]
+
         return output
-    
+
     def _rgb_to_rgb565(self, image: np.ndarray) -> np.ndarray:
         """Convert RGB888 to RGB565."""
         r = (image[:, :, 0] >> 3).astype(np.uint16)
         g = (image[:, :, 1] >> 2).astype(np.uint16)
         b = (image[:, :, 2] >> 3).astype(np.uint16)
         return (r << 11) | (g << 5) | b
-    
+
     def _encode_frame(self, image: np.ndarray) -> bytes:
         """
         Encode image for transmission using COBS.
@@ -206,12 +227,12 @@ class LEDMatrixController:
         rgb565 = self._rgb_to_rgb565(image)
 
         # Convert to bytes (little-endian)
-        data = rgb565.astype('<u2').tobytes()
+        data = rgb565.astype("<u2").tobytes()
 
         # COBS encode and add 0x00 terminator
         encoded = cobs_encode(data)
-        return encoded + b'\x00'
-    
+        return encoded + b"\x00"
+
     def _update_fps(self):
         """Update FPS counter."""
         self._frame_count += 1
@@ -220,12 +241,12 @@ class LEDMatrixController:
             self._current_fps = self._frame_count / elapsed
             self._frame_count = 0
             self._fps_start = time.time()
-    
+
     @property
     def fps(self) -> float:
         """Get current FPS."""
         return self._current_fps
-    
+
     def send_frame(self, image: np.ndarray, wait_ack: bool = True) -> bool:
         """
         Send a frame to the display.
@@ -239,43 +260,51 @@ class LEDMatrixController:
         """
         encoded = self._encode_frame(image)
         result = self.device.send(encoded, wait_ack=wait_ack)
-        
+
         if result:
             self._update_fps()
-        
+
         return result
-    
+
+    def display(self, image: np.ndarray) -> bool:
+        """
+        Display an image on the LED matrix (alias for send_frame).
+
+        Args:
+            image: RGB image (any size, will be resized)
+
+        Returns:
+            True if successful
+        """
+        return self.send_frame(image)
+
     def fill(self, color: Tuple[int, int, int]):
         """Fill display with solid color."""
         image = np.full((self.height, self.width, 3), color, dtype=np.uint8)
         self.send_frame(image)
-    
+
     def clear(self):
         """Clear display (fill with black)."""
         self.fill((0, 0, 0))
-    
+
     # ========================================
     # Input Modes
     # ========================================
-    
+
     def display_image(self, path: Union[str, Path]):
         """Display a static image."""
         if not HAS_CV2:
             raise ImportError("OpenCV required: pip install opencv-python")
-        
+
         image = cv2.imread(str(path))
         if image is None:
             raise ValueError(f"Cannot load image: {path}")
-        
+
         # Convert BGR to RGB
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         self.send_frame(image)
-    
-    def play_video(
-        self,
-        path: Union[str, Path],
-        loop: bool = False
-    ):
+
+    def play_video(self, path: Union[str, Path], loop: bool = False):
         """
         Play a video file with frame dropping to maintain target frame rate.
 
@@ -342,8 +371,16 @@ class LEDMatrixController:
 
                 # Print progress periodically
                 if self._frame_count == 0:
-                    drop_rate = (frames_dropped / (frames_sent + frames_dropped) * 100) if (frames_sent + frames_dropped) > 0 else 0
-                    print(f"\rSent: {frames_sent}, Dropped: {frames_dropped} ({drop_rate:.1f}%)  ", end='', flush=True)
+                    drop_rate = (
+                        (frames_dropped / (frames_sent + frames_dropped) * 100)
+                        if (frames_sent + frames_dropped) > 0
+                        else 0
+                    )
+                    print(
+                        f"\rSent: {frames_sent}, Dropped: {frames_dropped} ({drop_rate:.1f}%)  ",
+                        end="",
+                        flush=True,
+                    )
 
                 # Wait until next frame time to maintain target FPS
                 next_frame_time += frame_interval
@@ -354,11 +391,11 @@ class LEDMatrixController:
         finally:
             cap.release()
             print()
-    
+
     # ========================================
     # Demo Modes
     # ========================================
-    
+
     def run_demo(self, demo_name: str, fps: float = 30.0):
         """Run a demo animation."""
         demos = {
@@ -369,109 +406,111 @@ class LEDMatrixController:
             "matrix": self._demo_matrix,
             "clock": self._demo_clock,
         }
-        
+
         if demo_name not in demos:
             raise ValueError(f"Unknown demo: {demo_name}")
-        
+
         print(f"Running demo: {demo_name}")
         print("Press Ctrl+C to stop")
-        
+
         frame_time = 1.0 / fps
-        
+
         try:
             t = 0.0
             while True:
                 start = time.time()
-                
+
                 image = demos[demo_name](t)
                 self.send_frame(image)
-                
+
                 t += frame_time
-                
+
                 elapsed = time.time() - start
                 if elapsed < frame_time:
                     time.sleep(frame_time - elapsed)
-                
+
                 if self._frame_count == 0:
-                    print(f"\rFPS: {self.fps:.1f}  ", end='', flush=True)
-                    
+                    print(f"\rFPS: {self.fps:.1f}  ", end="", flush=True)
+
         except KeyboardInterrupt:
             print()
-    
+
     def _demo_rainbow(self, t: float) -> np.ndarray:
         """Rainbow gradient animation."""
         import colorsys
-        
+
         image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        
+
         for x in range(self.width):
             hue = (t * 0.5 + x / self.width) % 1.0
             r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
             image[:, x] = [int(r * 255), int(g * 255), int(b * 255)]
-        
+
         return image
-    
+
     def _demo_gradient(self, t: float) -> np.ndarray:
         """Color gradient animation."""
         import colorsys
-        
+
         image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        
+
         for y in range(self.height):
             for x in range(self.width):
                 hue = (t * 0.2 + x / self.width * 0.5 + y / self.height * 0.5) % 1.0
                 r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
                 image[y, x] = [int(r * 255), int(g * 255), int(b * 255)]
-        
+
         return image
-    
+
     def _demo_plasma(self, t: float) -> np.ndarray:
         """Plasma effect."""
         import colorsys
-        
+
         image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        
+
         for y in range(self.height):
             for x in range(self.width):
                 v1 = math.sin(x / 16.0 + t * 2)
                 v2 = math.sin((y / 8.0 + t) * 2)
                 v3 = math.sin((x / 16.0 + y / 16.0 + t) * 2)
-                v4 = math.sin(math.sqrt(x*x + y*y) / 8.0 + t * 3)
-                
+                v4 = math.sin(math.sqrt(x * x + y * y) / 8.0 + t * 3)
+
                 v = (v1 + v2 + v3 + v4) / 4.0
                 hue = (v + 1.0) / 2.0
-                
+
                 r, g, b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
                 image[y, x] = [int(r * 255), int(g * 255), int(b * 255)]
-        
+
         return image
-    
+
     def _demo_fire(self, t: float) -> np.ndarray:
         """Fire effect."""
         import random
-        
+
         # Initialize or get fire buffer
-        if not hasattr(self, '_fire_buffer'):
+        if not hasattr(self, "_fire_buffer"):
             self._fire_buffer = np.zeros((self.height + 2, self.width), dtype=np.float32)
-        
+
         buf = self._fire_buffer
-        
+
         # Generate heat at bottom
         for x in range(self.width):
             buf[self.height + 1, x] = random.random() * 255
-        
+
         # Propagate fire upward
         for y in range(self.height, 0, -1):
             for x in range(self.width):
                 decay = random.random() * 3
                 x1 = max(0, x - 1)
                 x2 = min(self.width - 1, x + 1)
-                
-                buf[y-1, x] = max(0, (buf[y, x1] + buf[y, x] + buf[y, x2] + buf[y+1, x]) / 4.0 - decay)
-        
+
+                buf[y - 1, x] = max(
+                    0, (buf[y, x1] + buf[y, x] + buf[y, x2] + buf[y + 1, x]) / 4.0 - decay
+                )
+
         # Convert to RGB
         image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        
+
         for y in range(self.height):
             for x in range(self.width):
                 v = int(buf[y, x])
@@ -481,64 +520,204 @@ class LEDMatrixController:
                     image[y, x] = [255, (v - 85) * 3, 0]
                 else:
                     image[y, x] = [255, 255, (v - 170) * 3]
-        
+
         return image
-    
+
     def _demo_matrix(self, t: float) -> np.ndarray:
         """Matrix rain effect."""
         import random
-        
+
         # Initialize drops
-        if not hasattr(self, '_matrix_drops'):
+        if not hasattr(self, "_matrix_drops"):
             self._matrix_drops = [random.randint(-self.height, 0) for _ in range(self.width // 2)]
             self._matrix_speeds = [random.randint(1, 3) for _ in range(self.width // 2)]
-        
+
         image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        
+
         for i, (drop_y, speed) in enumerate(zip(self._matrix_drops, self._matrix_speeds)):
             x = i * 2
-            
+
             # Draw trail
             for j in range(min(10, self.height)):
                 y = int(drop_y) - j
                 if 0 <= y < self.height:
                     brightness = max(0, 255 - j * 25)
                     image[y, x] = [0, brightness, 0]
-            
+
             # Update position
             self._matrix_drops[i] = drop_y + speed * 0.5
             if self._matrix_drops[i] > self.height + 10:
                 self._matrix_drops[i] = random.randint(-10, 0)
                 self._matrix_speeds[i] = random.randint(1, 3)
-        
+
         return image
-    
+
     def _demo_clock(self, t: float) -> np.ndarray:
         """Digital clock display."""
         if not HAS_CV2:
             return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        
+
         import datetime
-        
+
         now = datetime.datetime.now()
         time_str = now.strftime("%H:%M:%S")
-        
+
         image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-        
+
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 1.0
         thickness = 2
-        
+
         (text_w, text_h), _ = cv2.getTextSize(time_str, font, font_scale, thickness)
         x = (self.width - text_w) // 2
         y = (self.height + text_h) // 2
-        
+
         # Pulsing color
         hue = (t * 0.1) % 1.0
         import colorsys
+
         r, g, b = colorsys.hsv_to_rgb(hue, 0.7, 1.0)
         color = (int(r * 255), int(g * 255), int(b * 255))
-        
+
         cv2.putText(image, time_str, (x, y), font, font_scale, color, thickness)
-        
+
         return image
+
+    def run_countdown(self, config: CountdownConfig):
+        """
+        Run countdown display continuously with given config.
+
+        Args:
+            config: Configuration object implementing CountdownConfig protocol.
+                   Should have deadline, display, and fps attributes.
+        """
+        import colorsys
+        import datetime
+        import time
+
+        deadline = config.deadline.datetime
+        display_cfg = config.display
+
+        flash_start = None
+        flash_text = None
+
+        frame_time = 1.0 / config.fps
+        frame_count = 0
+        start_time = time.time()
+        last_print = 0
+
+        try:
+            while True:
+                loop_start = time.time()
+
+                now = datetime.datetime.now()
+                remaining = deadline - now
+                total_seconds = int(remaining.total_seconds())
+
+                image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+
+                if total_seconds < 0:
+                    text = display_cfg.expired_text
+                    show_rainbow = False
+                    blink_on = (int(time.time() * 2) % 2) == 0
+                    is_warning = False
+                else:
+                    hours = total_seconds // 3600
+                    minutes = (total_seconds % 3600) // 60
+                    seconds = total_seconds % 60
+                    days = total_seconds // 86400
+
+                    text = display_cfg.text_format.format(
+                        hours=hours, minutes=minutes, seconds=seconds, days=days
+                    )
+
+                    is_warning = (
+                        display_cfg.warning_color is not None and hours <= display_cfg.warning_hours
+                    )
+
+                    is_hourly_mark = minutes == 0 and seconds == 0
+
+                    if is_hourly_mark and flash_start is None:
+                        flash_start = now
+                        flash_text = text
+
+                    if flash_start is not None:
+                        elapsed = (now - flash_start).total_seconds()
+                        if elapsed < display_cfg.flash_duration:
+                            text = flash_text
+                            show_rainbow = display_cfg.rainbow_flash
+                            blink_on = (int(elapsed * display_cfg.blink_frequency * 2) % 2) == 0
+                        else:
+                            flash_start = None
+                            flash_text = None
+                            show_rainbow = False
+                            blink_on = True
+                    else:
+                        show_rainbow = False
+                        blink_on = True
+
+                if not blink_on:
+                    self.display(image)
+                    frame_count += 1
+                    elapsed = time.time() - loop_start
+                    time.sleep(max(0, frame_time - elapsed))
+                    continue
+
+                if HAS_CV2:
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = display_cfg.font_scale
+                    thickness = display_cfg.font_thickness
+
+                    (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
+                    start_x = max(0, (self.width - text_w) // 2)
+                    y = (self.height + text_h) // 2
+
+                    if show_rainbow:
+                        x = start_x
+                        for i, char in enumerate(text):
+                            hue = i / max(1, len(text) - 1)
+                            # colorsys returns RGB, but OpenCV expects BGR
+                            rgb_r, rgb_g, rgb_b = colorsys.hsv_to_rgb(hue, 1.0, 1.0)
+                            color_bgr = (
+                                int(rgb_b * 255),
+                                int(rgb_g * 255),
+                                int(rgb_r * 255),
+                            )  # BGR format for OpenCV
+                            cv2.putText(image, char, (x, y), font, font_scale, color_bgr, thickness)
+                            (char_w, _), _ = cv2.getTextSize(char, font, font_scale, thickness)
+                            x += char_w
+                    else:
+                        if is_warning:
+                            color_rgb = display_cfg.warning_color
+                        else:
+                            color_rgb = display_cfg.normal_color
+                        # Convert RGB tuple to BGR for OpenCV
+                        color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
+                        cv2.putText(
+                            image, text, (start_x, y), font, font_scale, color_bgr, thickness
+                        )
+                else:
+                    # Fallback: no OpenCV, just fill a rectangle
+                    h, w = self.height, self.width
+                    # Convert RGB to BGR for numpy array storage
+                    rgb_r, rgb_g, rgb_b = display_cfg.normal_color
+                    color_bgr = (rgb_b, rgb_g, rgb_r)
+                    image[h // 4 : 3 * h // 4, w // 4 : 3 * w // 4] = color_bgr
+
+                self.display(image)
+
+                frame_count += 1
+                current_time = time.time()
+                if current_time - last_print >= 5.0:
+                    actual_fps = frame_count / (current_time - start_time)
+                    print(f"⏱  FPS: {actual_fps:.1f}  |  Remaining: {text}")
+                    last_print = current_time
+
+                elapsed = time.time() - loop_start
+                time.sleep(max(0, frame_time - elapsed))
+
+        except KeyboardInterrupt:
+            raise
+        except Exception as e:
+            print(f"\n❌ Error: {e}")
+            raise
