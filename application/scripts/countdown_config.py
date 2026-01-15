@@ -5,7 +5,7 @@ Countdown display configuration.
 
 import datetime
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 @dataclass
@@ -42,7 +42,7 @@ class DisplayConfig:
     font_thickness: int = 1
     text_format: str = "{hours}h{minutes:02d}m{seconds:02d}s"
     expired_text: str = "DONE!"
-    warning_color: Tuple[int, int, int] = None
+    warning_color: Optional[Tuple[int, int, int]] = None
     warning_hours: int = 24
 
 
@@ -50,7 +50,7 @@ class DisplayConfig:
 class SerialConfig:
     """シリアルポート設定"""
 
-    port: str = None
+    port: Optional[str] = None
     baudrate: int = 115200
     timeout: float = 1.0
 

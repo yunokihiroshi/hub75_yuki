@@ -7,7 +7,7 @@ and communication with the LED matrix panel.
 
 import time
 import math
-from typing import Tuple, Union
+from typing import Tuple, Union, Any
 from pathlib import Path
 
 import numpy as np
@@ -564,8 +564,14 @@ class LEDMatrixController:
 
         return image
 
-    def run_countdown(self, config):
-        """Run countdown display continuously with given config."""
+    def run_countdown(self, config: Any):
+        """
+        Run countdown display continuously with given config.
+
+        Args:
+            config: Configuration object with deadline, display, and fps attributes.
+                   Expected to have countdown_config.Config structure.
+        """
         import colorsys
         import datetime
         import time
